@@ -1,4 +1,4 @@
-** Medicaid-Abortion-Impact-Analysis**
+# Medicaid-Abortion-Impact-Analysis
 
 ### Project Overview
 This GitHub repository houses the code and documentation for a study on the impact of the 2014 Medicaid expansion on abortion rates among women in the United States. The study focuses on analyzing the effects of this policy shift, implemented in 16 states, on the socioeconomic background of women and its correlation with abortion disparities across states.
