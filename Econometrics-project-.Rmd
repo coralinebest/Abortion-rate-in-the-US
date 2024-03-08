@@ -1,0 +1,602 @@
+---
+title: "Econometrics project"
+author: "Coraline Best,Chloe Hertrich, Julie Rabenandrasana"
+date: '2022-11-16'
+output: html_document
+---
+
+# Part 1: Cleaning of the datasets
+
+***1) Cleaning of the abortion dataset***
+```{r setup, include=FALSE}
+
+#Loading packages
+library(pacman)
+p_load(tidyverse, data.table, broom, parallel, here, plotly, ggplot2, stargazer, magrittr,skimr,janitor,  tidymodels, ADAPTS, caret, yardstick, rlang, parsnip, sandwich, lmtest, haven, tinytex, rdrobust,dplyr, plotrix, plyr,readxl, usmap, stringr, finalfit, scales,tidyr, gridExtra, patchwork, EventStudy, fixest,kableExtra,wesanderson, gtsummary)
+
+
+#Setting directory
+setwd("/Users/coraline/Desktop/Econometrics project")
+
+#Loading the dataset of abortion:
+abortion_dataset<- read_dta("NationalAndStatePregnancy_PublicUse.dta")
+
+#Filtering years in order to only have from 2010 to 2017:
+abortion_dataset= subset(abortion_dataset, abortion_dataset$year>=2010 & abortion_dataset$year<=2017)
+
+#States we want to drop in order to merge all the datasets together:
+abortion_dataset<-abortion_dataset[!(abortion_dataset$state=="DC" | abortion_dataset$state=="US"),]
+
+# Changing the names of the states from abbreviations to full name:
+abortion_dataset$state <- revalue(abortion_dataset$state,c("AL"="alabama","AK"="alaska","AZ"="arizona","AR"="arkansas", "CA"="california","CO" = "colorado", "CT"="connecticut","DE"="delaware", "FL"= "florida", "GA"="georgia","HI"="hawaii" , "ID"="idaho","IL"="illinois", "IN"= "indiana", "IA"="iowa","KS" ="kansas","KY"="kentucky","LA"= "louisiana", "ME"="maine", "MD"="maryland","MA"= "massachusetts", "MI"="michigan", "MN"="minnesota","MS"="mississippi","MO"="missouri","MT"="montana","NE"="nebraska", "NV"="nevada","NH"="new hampshire","NJ"="new jersey","NM"="new mexico", "NY"= "new york", "NC"="north carolina", "ND"="north dakota","OH"="ohio","OK"="oklahoma", "OR"="oregon","PA"="pennsylvania","RI"="rhode island","SC"="south carolina","SD"="south dakota","TN"="tennessee","TX"="texas", "UT"= "utah", "VT"="vermont","VA"="virginia","WA"= "washington", "WV"="west virginia","WI"="wisconsin" ,"WY"="wyoming" ))
+
+#Keeping only the variables that we are interested in 
+abortion_totaldataset<- select(abortion_dataset, c("state", "year", "abortionratelt20", "abortionrate2024", "abortionrate2529", "abortionrate3034", "abortionrate3539", "abortionrate40plus", "abortionratetotal", "birthratetotal"))
+
+#using skim() to see the number of missing values:
+skim(abortion_totaldataset)
+#Luckily we don't have any missing value in this dataset
+```
+
+
+***2) Cleaning of the economic characteristics dataset***
+```{r}
+#Importation of the different datasets of Economic characteristics
+files_e<- c("2010.SelectedEconomicCharacteristics.xlsx","2011.SelectedEconomicCharacteristics.xlsx", "2012.SelectedEconomicCharacteristics.xlsx","2013.SelectedEconomicCharacteristics.xlsx", "2014.SelectedEconomicCharacteristics.xlsx", "2015.SelectedEconomicCharacteristics.xlsx","2016.SelectedEconomicCharacteristics.xlsx", "2017.SelectedEconomicCharacteristics.xlsx" )
+
+names<-c("e2010","e2011","e2012","e2013","e2014","e2015","e2016","e2017")
+
+#open all the datasets using a loop
+for (i in seq_along(files_e)) {
+  assign(names[i], read_excel(path = files_e[i], sheet=2 ))
+}
+
+#merging all the dataset
+economic_cha<- cbind.data.frame(e2010,e2011,e2012,e2013,e2014,e2015,e2016,e2017)
+
+#keeping the variable we need
+economic_cha  <- economic_cha[c(6,7, 59:68),]
+
+#transposing data
+economic_cha <- data.frame(t(economic_cha), stringsAsFactors=FALSE)
+names(economic_cha) <- economic_cha[1,]
+economic_cha<- economic_cha[-1,]
+economic_cha  <- economic_cha[-c(53,106,159,212,265,318,371),]
+
+#adding year in each dataframe
+economic_cha$year<- c(rep(2010:2017,each=52,length.out=416))
+
+#creation of state variable
+state<-c("alabama","alaska", "arizona", "arkansas","california","colorado","connecticut","delaware","district of columbia","florida", "georgia","hawaii" ,"idaho",
+         "illinois", "indiana","iowa","kansas","kentucky","louisiana","maine","maryland", "massachusetts","michigan", "minnesota",
+         "mississippi","missouri","montana","nebraska","nevada","new hampshire","new jersey","new mexico","new york","north carolina", "north dakota","ohio","oklahoma", 
+         "oregon","pennsylvania","rhode island","south carolina","south dakota","tennessee","texas", "utah","vermont", "virginia","washington", "west virginia","wisconsin" ,"wyoming","puerto rico" )
+
+economic_cha <- cbind(economic_cha,state)
+
+#dropping the state which are not in abortion_dataset
+economic_cha<-subset(economic_cha, state!="District of Columbia" & state!="Puerto Rico")
+
+#dropping character space and percentage
+economic_cha[,c(1:12)] <- lapply(economic_cha[,c(1:12)], str_replace_all, pattern =  "\\s+", replacement ="")
+economic_cha[,c(1:12)] <- lapply(economic_cha[,c(1:12)], str_replace_all, pattern = "%", replacement ="")
+
+#create a dataframe of our variables
+economic_cha<-data.frame(economic_cha)
+
+#changing all variable in numeric
+economic_cha[,c(1:12)] <- sapply(economic_cha[,c(1:12)], as.numeric)
+
+#renaming all the variable
+new_name <- c("eco_empl","eco_unempl","eco_inc_h1","eco_inc_h2","eco_inc_h3","eco_inc_h4","eco_inc_h5","eco_inc_h6",
+              "eco_inc_h7","eco_inc_h8","eco_inc_h9","eco_inc_h10")
+economic_cha<- economic_cha %>% rename_at(1:12,~new_name)
+
+```
+
+***3) Cleaning of the individual characteristics dataset:***
+```{r}
+#Importing dataset individual characteristics
+
+files_i<- c("2010.SelectedIndividualCharacteristics.xlsx","2011.SelectedIndividualCharacteristics.xlsx", "2012.SelectedIndividualCharacteristics.xlsx","2013.SelectedIndividualCharacteristics.xlsx","2014.SelectedIndividualCharacteristics.xlsx", "2015.SelectedIndividualCharacteristics.xlsx", "2016.SelectedIndividualCharacteristics.xlsx", "2017.SelectedIndividualCharacteristics.xlsx")
+
+names<-c("i2010","i2011","i2012","i2013","i2014","i2015","i2016","i2017")
+
+
+#open all datasets
+for (i in seq_along(files_i)) {
+  assign(names[i], read_excel(path = files_i[i], sheet=2))
+         }
+
+#merging all the datasets
+individual_cha<- cbind.data.frame(i2010,i2011,i2012,i2013,i2014,i2015,i2016,i2017)
+
+#transposing data
+individual_cha <- data.frame(t(individual_cha), stringsAsFactors=FALSE)
+names(individual_cha) <- individual_cha[1,]
+individual_cha<- individual_cha[-1,]
+individual_cha  <- individual_cha[-c(53,106,159,212,265,318,371),]
+
+#adding year in the dataset
+#individual_cha$year<- c(rep(2010:2017,each=52,length.out=416))
+
+#selecting variables
+individual_cha <-select(individual_cha,"White","Black or African American", "Asian","Hispanic or Latino origin (of any race)", "Never married","Now married, except separated","Divorced or separated","Widowed", "High school graduate (includes equivalency)", "Some college or associate's degree","Bachelor's degree","Graduate or professional degree", "Total population", "Female")
+
+#creation of state variable
+state<-c("alabama","alaska", "arizona", "arkansas","california","colorado","connecticut","delaware","district of columbia","florida", "georgia","hawaii" ,"idaho","illinois","indiana","iowa","kansas","kentucky","louisiana","maine","maryland", "massachusetts","michigan","minnesota","mississippi","missouri","montana","nebraska","nevada","new hampshire","new jersey","new mexico","new york","north carolina", "north dakota","ohio","oklahoma", "oregon","pennsylvania","rhode island","south carolina","south dakota","tennessee","texas", "utah","vermont", "virginia","washington", "west virginia","wisconsin" ,"wyoming","puerto rico" )
+
+individual_cha <- cbind(individual_cha,state)
+ 
+#dropping the state which are not in abortion_dataset
+individual_cha<-subset(individual_cha, state!="district of columbia" & state!="puerto rico")
+
+#dropping character
+individual_cha[,c(1:12)] <- lapply(individual_cha[,c(1:12)], str_replace_all, pattern =  "\\s+", replacement ="")
+individual_cha[,c(1:12)] <- lapply(individual_cha[,c(1:12)], str_replace_all, pattern = "%", replacement ="")
+
+#creation of a dataframe
+individual_cha<-data.frame(individual_cha)
+
+#changing all variable in numerics
+individual_cha[,c(1:12)] <- sapply(individual_cha[,c(1:12)], as.numeric)
+
+#rename variables
+new_name <- c("ind_eth_w","ind_eth_b","ind_eth_a","ind_eth_h","ind_sta_n","ind_sta_m",
+              "ind_sta_d", "ind_sta_w","ind_educ_h","ind_educ_c","ind_educ_b","ind_educ_g")
+individual_cha<- individual_cha %>% rename_at(1:12,~new_name)
+```
+
+***4) Merging the datasets all together***
+```{r}
+#Merging economic_cha and individual_cha
+data <- merge(individual_cha,economic_cha,by=c("state"))
+
+#organise rows
+data<-data %>% arrange(state)
+abortion_dataset<-abortion_dataset %>% arrange(state)
+
+#merge dataset abortion_dataset, data
+data <- merge(data,abortion_totaldataset,by=c("year","state"))
+
+#label variable
+attributes(data$eco_empl)$label <- c("Employed")
+attributes(data$eco_unempl)$label <- c("Unemployed")
+attributes(data$eco_inc_h1)$label <- c("Household income: less than $10,000")
+attributes(data$eco_inc_h2)$label <- c("Household income:  $10,000 to $14,999")
+attributes(data$eco_inc_h3)$label <- c("Household income:  $15,000 to $24,999")
+attributes(data$eco_inc_h4)$label <- c("Household income:  $25,000 to $34,999")
+attributes(data$eco_inc_h5)$label <- c("Household income:  $35,000 to $49,999")
+attributes(data$eco_inc_h6)$label <- c("Household income:  $50,000 to $74,999")
+attributes(data$eco_inc_h7)$label <- c("Household income:  $75,000 to $99,999")
+attributes(data$eco_inc_h8)$label <- c("Household income:  $100,000 to $149,999")
+attributes(data$eco_inc_h9)$label <- c("Household income:  $150,000 to $199,999")
+attributes(data$eco_inc_h10)$label <- c("Household income:  $200,000 or more")
+attributes(data$ind_eth_w)$label <- c("Ethnicity: white")
+attributes(data$ind_eth_b)$label <- c("Ethnicity black or african american")
+attributes(data$ind_eth_a)$label <- c("Ethnicity asian")
+attributes(data$ind_eth_h)$label <- c("Ethnicity hispanic of latino")
+attributes(data$ind_sta_n)$label <- c("Marital status: never married ")
+attributes(data$ind_sta_m)$label <- c("Marital status:  married ")
+attributes(data$ind_sta_d)$label <- c("Marital status: divorced or separated ")
+attributes(data$ind_sta_w)$label <- c("Marital status: widowed ")
+attributes(data$ind_educ_h)$label <- c("Level of education: High school graduate ")
+attributes(data$ind_educ_c)$label <- c("Level of education: Some college or associate's degree ")
+attributes(data$ind_educ_b)$label <- c("Level of education: Bachelor's degree ")
+attributes(data$ind_educ_g)$label <- c("Level of education: Graduate or professional degree ")
+attributes(data$abortionratelt20)$label <- c("Abortion rate among women aged younger than 20")
+attributes(data$abortionrate2024)$label <- c("Abortion rate among women aged 20-24")
+attributes(data$abortionrate2529)$label <- c("Abortion rate among women aged 25-29")
+attributes(data$abortionrate3034)$label <- c("Abortion rate among women aged 30-34")
+attributes(data$abortionrate3539)$label <- c("Abortion rate among women aged 35-39")
+attributes(data$abortionrate40plus)$label <- c("Abortion rate among women aged 40 or older")
+attributes(data$abortionratetotal)$label <- c("Abortion rate among women aged 15 to 44")
+attributes(data$birthratetotal)$label <- c("Birthrate among women aged 15 to 44")
+
+
+skim(data)
+
+```
+
+```{r}
+#Creation of variables for the diff-in-diff
+
+#creation: treatment variable
+summary(data$treatment)
+data$treatment <- ifelse((data$state %in% c("alaska", "connecticut", "californie","illinois", "massachusetts","maryland","minnesota","hawaii", "new jersey","new york", "montana","new mexico", "oregon", "vermont","west virginia", "washington")),1,0)
+
+summary(data$treatment)
+data$treatment_ <- ifelse((data$state %in% c("alaska", "connecticut", "californie","illinois",  "massachusetts","maryland","minnesota","hawaii", 
+"new jersey","new york", "montana","new mexico", "oregon", "vermont","west virginia", "washington")),"Treated","Controlled")
+
+#creation: the post variable
+summary(data$post)
+data$post = ifelse(data$year >= 2015, 1,0)
+data$post_ = ifelse(data$year >= 2015, "After","Before")
+summary(data$post)
+
+#keeping variables for the diff-in-diff dataset
+data_did <-select(data,"state", "year","abortionratetotal","post","treatment")
+```
+
+# Part 2: Parallel trends and descriptive statistics
+
+***1) Descriptive statistics***
+```{r}
+# histogram of the treated and controlled group
+graph1 <- ggplot(data, aes(treatment_, fill=treatment_))+
+  geom_bar(aes(y = (..count..)/sum(..count..))) + 
+  scale_y_continuous(labels = percent_format(),limits=c(0,0.9))+
+  theme_bw()+
+  geom_text(aes(y = (..count..)/sum(..count..), 
+                label =paste0(round(prop.table(..count..) * 100,1), '%')), 
+            stat = 'count', 
+            position = position_dodge(.9), 
+            size = 5,
+            vjust=-0.2,
+            fontface=2)+
+  theme_bw()+
+  labs( y = 'Percentage of states', 
+        x='Treated/Controlled groups',
+        title = 'Repartition of the treatment and control group in percentage of states') +
+  guides(fill='none')+scale_fill_viridis_d()
+  
+graph1
+```
+
+```{r}
+
+#Summary statistic table 1 
+
+summarystat1= data%>% select(abortionrate2024, abortionrate2529, abortionrate3034, abortionrate3539, abortionrate40plus)
+
+table1= tbl_summary(summarystat1,
+                     statistic = list(all_continuous()  ~"{mean} ({sd})"),
+    digits = all_continuous() ~ 2,)%>%
+  add_n()%>%
+  modify_header(label="**Variable**")%>%
+    modify_caption("**Table 1: Abortion rate among women by different age categories**")
+table1
+
+```
+
+```{r}
+#Summary statistic table 2
+
+summarystat_2= data %>% select(abortionratetotal, eco_empl, treatment_, ind_educ_g,ind_eth_b, ind_sta_m, ind_sta_n, ind_sta_d) 
+
+table_2= tbl_summary(summarystat_2,
+                     by= treatment_,
+                     statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} / {N} ({p}%)"),
+                     missing_text = "(Missing)",
+    digits = all_continuous() ~ 2,)%>%
+  add_n()%>%
+  modify_header(label="**Variable**")%>%
+  modify_caption("**Table 2: Summary statistics**")
+  
+table_2
+```
+
+
+```{r}
+# ABORTION RATE
+
+#Map of the USA
+states_map <- map_data("state")
+us_map <- subset(data, year=="2017")
+names(us_map)[names(us_map) == "state"] <- "region"
+map_total_usa<- left_join(states_map, us_map, by= "region")
+
+#Creating the map
+map1 <- ggplot(map_total_usa, aes(long, lat, group= group))+
+  geom_polygon(aes(fill= abortionratetotal), color= "white")+ 
+  scale_fill_viridis_c()+ theme_bw()+theme(panel.border= element_blank(), panel.grid.major= element_blank(), panel.grid.minor=element_blank())+ labs(
+    title = "Abortion rate in United States in 2017")
+```
+
+```{r}
+#Line plots in order to compare two states through times, looking at abortion rate
+newyork_idaho = subset(data, state == "new york" |state == "idaho")
+
+palette1 = c("#CC79A7", "#009E73")
+
+graph2= ggplot(data = newyork_idaho, aes(x= year, y=abortionratetotal, group= state )) + geom_line(aes(color = state)) + scale_color_manual(values= palette1)+ theme_light()+ xlab("Years") + ylab ("Total abortion rate") + ggtitle(" Evolution of abortion rate through time in New York and in Idaho")
+graph2
+```
+
+```{r}
+# boxplot of the treated and not treated
+graph_3 <- ggplot(data, aes(treatment_,abortionratetotal,fill=treatment_))+
+  geom_boxplot()+
+  theme_bw()+
+  scale_y_continuous(labels = scales::percent_format(scale = 1))+
+  labs( y = 'Abortion rate', 
+        x='Treated/Control groups',
+        title = 'Abortion rate for the treated and controlled groups')+ scale_fill_viridis_d()
+graph_3
+```
+
+```{r}
+# STATES EVOLUTION
+
+#graph looking at the state
+graph4<-data %>% filter(state %in% c("new york","new jersey","maryland","florida")) %>% 
+  ggplot(aes(year,abortionratetotal))+
+  geom_point(alpha = .8, aes(color = state, size = abortionratetotal))+
+  scale_y_continuous(labels = scales::percent_format(scale = 1),limits=c(0,40))+
+  theme_bw()+
+  labs( y = 'Abortion rate', 
+        x='Year',
+        title = 'Evolution of abortion rate among states who beneficiated from the expansion of Medicaid') +
+  scale_color_viridis_d()
+graph4
+```
+
+
+```{r}
+palette2= c("#CC79A7", "#009E73","#56B4E9" ,"purple", "#882255", "#FF9999","#999999","#F0E442")
+
+graph5<-data %>% filter(state %in% c("idaho","texas", "arizona", "arkansas","massachusetts",                    "colorado","utah","delaware")) %>%
+  ggplot(aes(x = year,y = abortionratetotal, col = state)) +
+  geom_line(aes(linetype=state))+
+  scale_y_continuous(labels = scales::percent_format(scale = 1),limits=c(0,40))+
+  theme_bw()+
+  labs( y = 'Abortion rate', 
+        x='Year',
+        title = 'Evolution of abortion rate among states who did not beneficiate from the expansion of Medicaid') +
+  scale_color_manual(values = palette2)
+graph5
+```
+
+```{r}
+
+
+#graphique 1
+ggplot(data, aes(post_, abortionratetotal, color=treatment_)) +
+  geom_jitter(aes(shape =treatment_)) +
+  theme_bw()+
+  labs( y = 'Abortion rate', 
+        x='Timeline',
+        title = 'Abortion rate before and after the Medicaid expansion among all states')+
+  scale_color_manual(values = palette1)
+
+```
+
+***2) Parallel trends ***
+```{r}
+#parallel trend abortionratetotal
+parallel_trend_1<-ggplot(data, aes(year, abortionratetotal, group=treatment_,color=treatment_)) +
+  stat_summary(fun = mean, geom = 'line',aes(linetype =treatment_)) +
+  geom_vline(xintercept = 2015) +
+  theme_bw()+
+  labs( y = 'Rate of abortions', 
+        x='Year',
+        title = 'Parallel trend of the abortion rate for women 
+aged 15-44 years') +
+   scale_color_manual(values= palette1)
+parallel_trend_1
+
+```
+
+```{r}
+#parallel trend abortionrate2024
+pt_2024<-ggplot(data, aes(year, abortionrate2024, group=treatment_,color=treatment_)) +
+  stat_summary(fun = mean, geom = 'line',aes(linetype =treatment_)) +
+  geom_vline(xintercept = 2015) +
+  theme_bw()+
+  labs( y = 'Abortion rate', 
+        x='Year',
+        title = 'Abortion rate for women aged 20-24 years') +
+   scale_color_manual(values= palette1)
+
+#parallel trend abortionrate2529
+pt_2529<-ggplot(data, aes(year, abortionrate2529, group=treatment_,color=treatment_)) +
+  stat_summary(fun = mean, geom = 'line',aes(linetype =treatment_)) +
+  geom_vline(xintercept = 2015) +
+  theme_bw()+
+  labs( y = 'Abortion rate', 
+        x='Year',
+        title = 'Abortion rate for women aged 25-29 years') +
+  scale_color_manual(values= palette1)
+
+#parallel trend abortionrate3034
+pt_3034<-ggplot(data, aes(year, abortionrate3034, group=treatment_,color=treatment_)) +
+  stat_summary(fun = mean, geom = 'line',aes(linetype =treatment_)) +
+  geom_vline(xintercept = 2015) +
+  theme_bw()+
+  labs( y = 'Abortion rate', 
+        x='Year',
+        title = 'Abortion rate for women aged 30-34 years') +
+  scale_color_manual(values= palette1)
+
+#parallel trend abortionrate3539
+pt_3539<-ggplot(data, aes(year, abortionrate3539, group=treatment_,color=treatment_)) +
+  stat_summary(fun = mean, geom = 'line',aes(linetype =treatment_)) +
+  geom_vline(xintercept = 2015) +
+  theme_bw()+
+  labs( y = 'Abortion rate', 
+        x='Year',
+        title = 'Abortion rate for women aged 35-39 years') +
+scale_color_manual(values= palette1)
+
+
+graph10<-pt_2024+pt_2529+pt_3034+pt_3539
+graph10
+```
+
+
+#Part 3: Difference-in-difference regression
+
+***1) Regression without accounting for missing values***
+```{r}
+#regression diff in diff with treatment and post variable
+reg_did_1 = lm(abortionratetotal ~ treatment + I(treatment*post) + post, data=data_did)
+```
+
+```{r}
+#regression diff in diff including using fixed effect
+reg_did_2 = lm(abortionratetotal ~ I(treatment*post) + factor(year) + factor(state), data=data_did)
+```
+
+
+```{r}
+#creation of the table with the results of the regression
+ stargazer(reg_did_1, type = "text",
+          title= "Table 3: Difference in difference estimates",
+          omit=c("year","state"),
+          align=TRUE,
+          dep.var.labels=c("Abortion Rate"), 
+          covariate.labels=c("Treatment", "Interaction"),
+          no.space=TRUE)
+```
+```{r}
+##Doing diff-in-diff regressions by age groups
+
+#diff in diff abortionrate2024 by using fixed effect
+reg_did_2024 = lm(abortionrate2024 ~ I(treatment*post) + factor(year) + factor(state), data=data)
+
+
+#diff in diff abortionrate2529 by using fixed effect
+reg_did_2529 = lm(abortionrate2529 ~ I(treatment*post) + factor(year) + factor(state), data=data)
+
+
+#diff in diff abortionrate3034 by using fixed effect
+reg_did_3034 = lm(abortionrate3034 ~ I(treatment*post) + factor(year) + factor(state), data=data)
+
+
+#diff in diff abortionrate3539 by using fixed effect
+reg_did_3539 = lm(abortionrate3539  ~ I(treatment*post) + factor(year) + factor(state), data=data)
+
+
+#creation of the table for the regression by group age
+stargazer(reg_did_2024, reg_did_2529, reg_did_3034, reg_did_3539,
+          type = "text",
+          title= "Table 4: Difference in Difference estimates by age groups",
+          align=TRUE,
+          omit=c("year","state"),
+          dep.var.labels=c("Age 20-24",
+                           "Age 25-29",
+                           "Age 30-34",
+                           "Age 35-39"),
+          covariate.labels=c("Interaction"))
+```
+
+```{r}
+# Diff-in-diff accounting for NAs
+
+#dropping missing values
+missingvalues= na.omit(data)
+
+
+#diff-in-diff regression accounting for NAs
+reg_did_NA = lm(abortionratetotal ~ I(treatment*post) + factor(year) + factor(state), data=missingvalues)
+
+#creation of the table with the result of the regression
+stargazer(reg_did_NA, type = "text",
+          title= "Table 5: Difference in difference estimates (accounting for missing values)",
+          align=TRUE,
+          omit=c("year","state"),
+          dep.var.labels=c("Abortion Rate"), 
+          covariate.labels=c("Interaction"),
+          no.space=TRUE)
+```
+
+
+```{r}
+#regression for abortionrate2024
+reg_did_NA_2024 = lm(abortionrate2024 ~ I(treatment*post) + factor(year) + factor(state), data=missingvalues)
+
+
+#regression for abortionrate2529
+reg_did_NA_2529 = lm(abortionrate2529 ~ I(treatment*post) + factor(year) + factor(state), data=missingvalues)
+
+
+#regression for abortionrate3034
+reg_did_NA_3034 = lm(abortionrate3034 ~ I(treatment*post) + factor(year) + factor(state), data= missingvalues)
+
+
+#regression for abortionrate3539
+reg_did_NA_3539 = lm(abortionrate3539 ~ I(treatment*post) + factor(year) + factor(state), data=missingvalues)
+
+#creation of the table for the regression less the NA state by age group
+stargazer(reg_did_NA_2024, reg_did_NA_2529, reg_did_NA_3034, reg_did_NA_3539,
+          type = "text", 
+          title= "Table 6: Difference-in-Difference estimates by age groups (accounting for missing values)",
+          align=TRUE,
+          omit=c("year","state"),
+          dep.var.labels=c("Age 20-24",
+                           "Age 25-29",
+                           "Age 30-34",
+                           "Age 35-39"),
+          covariate.labels=c("Interaction"))
+
+```
+
+```{r}
+# Diff-in-diff accounting for NAs with controls
+
+#diff-in-diff with the controls abortionratetotal
+reg_did_C = lm(abortionratetotal ~ I(treatment*post) + factor(year) + factor(state)+ 
+                 eco_empl + 
+                 eco_inc_h2 +eco_inc_h3 + eco_inc_h4 + eco_inc_h5+eco_inc_h6 +eco_inc_h7 +
+                 +eco_inc_h8+ eco_inc_h9+ eco_inc_h10 + 
+                 ind_eth_b + ind_eth_w + ind_eth_h +
+                 ind_sta_m +ind_sta_d +ind_sta_n
+               +ind_educ_h+ ind_educ_c+ ind_educ_b+ ind_educ_g, data=missingvalues)
+
+
+#creation of the table of the regression with the controls
+stargazer(reg_did_C,
+          type = "text",
+          title= "Table 7: Difference in difference estimates with controls",
+          align=TRUE,
+          omit=c("year","state"),
+          dep.var.labels=c("Abortion Rate"),
+          covariate.labels=c("Interaction","Employed","Household income: less than $10,000","Household income:  $10,000 to $14,999","Household income:  $15,000 to $24,999","Household income:  $25,000 to $34,999","Household income:  $35,000 to $49,999","Household income:  $50,000 to $74,999","Household income:  $75,000 to $99,999","Household income:  $100,000 to $149,999","Household income:  $150,000 to $199,999","Household income:  $200,000 or more","Ethnicity: white","Ethnicity black or african american","Ethnicity hispanic of latino","Marital status: never married ","Marital status: married", "Marital status: divorced or separated","Level of education: High school graduate","Level of education: Some college or associate's degree ","Level of education: Bachelor's degree ","Level of education: Graduate or professional degree"))
+```
+```{r}
+#diff in diff with the controls abortionrate2024
+reg_did_C_2024 = lm(abortionrate2024 ~ I(treatment*post) + factor(year) + factor(state)+ 
+eco_empl + eco_inc_h2 +eco_inc_h3 + eco_inc_h4 + eco_inc_h5+eco_inc_h6 +eco_inc_h7 +eco_inc_h8+ eco_inc_h9+ eco_inc_h10 + ind_eth_b + ind_eth_w + ind_eth_h +ind_sta_m +ind_sta_d +ind_sta_n +ind_educ_h+ ind_educ_c+ ind_educ_b+ ind_educ_g, data=missingvalues)
+
+
+#diff in diff with the controls abortionrate2529
+reg_did_C_2529 = lm(abortionrate2529 ~ I(treatment*post) + factor(year) + factor(state)+ eco_empl +  eco_inc_h2 +eco_inc_h3 + eco_inc_h4 + eco_inc_h5+eco_inc_h6 +eco_inc_h7 +eco_inc_h8+ eco_inc_h9+ eco_inc_h10 + ind_eth_b + ind_eth_w + ind_eth_h +ind_sta_m +ind_sta_d +ind_sta_n +ind_educ_h+ ind_educ_c+ind_educ_b+ ind_educ_g, data=missingvalues)
+
+
+#diff in diff with the controls abortionrate3034
+reg_did_C_3034 = lm(abortionrate3034 ~ I(treatment*post) + factor(year) + factor(state)+ 
+eco_empl + eco_inc_h2 +eco_inc_h3 + eco_inc_h4 + eco_inc_h5+eco_inc_h6 +eco_inc_h7 +eco_inc_h8+ eco_inc_h9+ eco_inc_h10 + ind_eth_b + ind_eth_w + ind_eth_h +ind_sta_m +ind_sta_d +ind_sta_n+ind_educ_h+ ind_educ_c+ind_educ_b+ ind_educ_g, data=missingvalues)
+
+#diff in diff with the controls abortionrate3539
+reg_did_C_3539 = lm(abortionrate3539 ~ I(treatment*post) + factor(year) + factor(state)+ 
+eco_empl + eco_inc_h2 +eco_inc_h3 + eco_inc_h4 + eco_inc_h5+eco_inc_h6 +eco_inc_h7 +eco_inc_h8+ eco_inc_h9+ eco_inc_h10 + ind_eth_b + ind_eth_w + ind_eth_h +ind_sta_m +ind_sta_d +ind_sta_n +ind_educ_h+ ind_educ_c+ind_educ_b+ ind_educ_g , data=missingvalues)
+
+#creation of the table of the regression with the age group and the controls
+stargazer(reg_did_C_2024, reg_did_C_2529, reg_did_C_3034, reg_did_C_3539,
+          type = "text",
+          title= "Table 8:Difference in Difference estimates by age groups with controls",
+          align=TRUE,
+          omit=c("year","state"),
+          dep.var.labels=c("Age 20-24",
+                           "Age 25-29",
+                           "Age 30-34",
+                           "Age 35-39"),
+          covariate.labels=c("Interaction","Employed","Household income: less than $10,000", "Household income:  $10,000 to $14,999","Household income:  $15,000 to $24,999","Household income:  $25,000 to $34,999","Household income:  $35,000 to $49,999",
+"Household income:  $50,000 to $74,999","Household income:  $75,000 to $99,999","Household income:  $100,000 to $149,999","Household income:  $150,000 to $199,999", "Household income:  $200,000 or more",
+"Ethnicity: white","Ethnicity black or african american","Ethnicity hispanic of latino","Marital status: never married ","Marital status: married",
+"Marital status: divorced or separated","Level of education: High school graduate","Level of education: Some college or associate's degree ","Level of education: Bachelor's degree ","Level of education: Graduate or professional degree"))
+```
+
+#Part 4) Event study:
+
+```{r}
+#Event study
+mod_twfe = feols(abortionratetotal ~ i(year,treatment,2014)+ factor(state)+ factor(year), data = data)
+
+iplot(mod_twfe, xlab = 'Time to treatment',
+main = 'Event study: Staggered treatment (TWFE)')
+
+```
+
